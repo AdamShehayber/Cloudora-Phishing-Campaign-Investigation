@@ -1,0 +1,29 @@
+// 1. Group delivery events by campaign, source IP, authentication, and action
+CloudoraMsgTrace_CL
+| where EventType == "Delivery"
+| summarize Messages=count(), Recipients=dcount(RecipientAddress)
+    by Campaign, SenderIP, SPFResult, DKIMResult, DMARCResult, DeliveryAction
+| order by Campaign asc, SenderIP asc
+
+// 2. Review phishing-link clicks and credential submissions
+CloudoraMsgTrace_CL
+| where EventType == "Click"
+| project TimeGenerated, RecipientAddress, Campaign, Url, ClickIP, CredentialsSubmitted
+| order by TimeGenerated asc
+
+// 3. Correlate credential submissions with successful sign-ins
+let CredVictims = CloudoraMsgTrace_CL
+| where EventType == "Click" and CredentialsSubmitted == "Yes"
+| distinct RecipientAddress;
+CloudoraSignIn_CL
+| where UserPrincipalName in (CredVictims)
+| where ResultType == "0"
+| project TimeGenerated, UserPrincipalName, AppDisplayName, IPAddress, City, Country, DeviceOS, Browser
+| order by UserPrincipalName asc, TimeGenerated asc
+
+// 4. Pivot on suspicious sign-in address range
+CloudoraSignIn_CL
+| where IPAddress startswith "198.18.7." and ResultType == "0"
+| summarize FirstSeen=min(TimeGenerated), LastSeen=max(TimeGenerated),
+    Apps=make_set(AppDisplayName) by UserPrincipalName, IPAddress, Country
+| order by FirstSeen asc
